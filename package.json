@@ -1,0 +1,13 @@
+{
+  "name": "sxm-radar",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/smoke.mjs",
+    "test:live": "node tests/live.mjs"
+  },
+  "devDependencies": {
+    "leaflet": "1.9.4",
+    "playwright-core": "1.47.2"
+  }
+}

@@ -1,0 +1,31 @@
+name: tests
+# Read-only: runs the offline browser tests, then a live check of the published site
+# against the real radar, map and cloud servers. Screenshots are kept as a run artifact.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright@1.47.2 install --with-deps chromium
+      - name: Offline tests
+        run: npm test
+      - name: Wait for GitHub Pages to publish this commit
+        run: sleep 90
+      - name: Live check
+        run: npm run test:live
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: tests/out/

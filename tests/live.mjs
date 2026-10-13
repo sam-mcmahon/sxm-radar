@@ -1,0 +1,64 @@
+// Live check for SXM Radar against the real internet: the published site, the real
+// Met Office radar, the real map and cloud tile servers. Read-only; it changes nothing.
+// Run: npm run test:live [url]     (default: the GitHub Pages site)
+import { chromium } from "playwright-core";
+import { mkdirSync, existsSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const OUT = join(ROOT, "tests/out");
+mkdirSync(OUT, { recursive: true });
+const SITE = process.argv[2] || "https://sam-mcmahon.github.io/sxm-radar/";
+
+function chromePath() {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const base = "/opt/pw-browsers";
+  if (existsSync(base)) for (const d of readdirSync(base)) { const p = join(base, d, "chrome-linux/chrome"); if (existsSync(p)) return p; }
+  return undefined;
+}
+
+const browser = await chromium.launch({ executablePath: chromePath(), args: ["--headless=new"] });
+const failures = [], notes = [];
+for (const mode of ["dark", "satellite+clouds"]) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  if (mode !== "dark") await ctx.addInitScript(() => { localStorage.setItem("sxm.satBase", "true"); localStorage.setItem("sxm.clouds", '"ir"'); });
+  const page = await ctx.newPage();
+  const tiles = { ok: 0, bad: [] };
+  page.on("pageerror", e => failures.push(`[${mode}] page error: ${e.message}`));
+  page.on("response", r => {
+    const u = r.url();
+    if (!/arcgisonline|gibs\.earthdata|cartocdn|tile\./.test(u)) return;
+    const type = r.headers()["content-type"] || "";
+    if (r.status() === 200 && type.startsWith("image/")) tiles.ok++;
+    else tiles.bad.push(`${r.status()} ${type} ${u.slice(0, 120)}`);
+  });
+  await page.goto(SITE, { waitUntil: "load" });
+  try {
+    await page.waitForFunction(() => {
+      const st = document.getElementById("status");
+      return (st.hidden && /frames/.test(document.getElementById("tCount").textContent) && !/^0 /.test(document.getElementById("tCount").textContent))
+        || /hasn't posted/.test(document.getElementById("statusText").textContent);
+    }, null, { timeout: 180000, polling: 1000 });
+  } catch { failures.push(`[${mode}] app never found scans nor reported the radar offline within 3 minutes`); }
+  await page.waitForTimeout(4000);
+  const s = await page.evaluate(() => ({
+    count: document.getElementById("tCount").textContent, age: document.getElementById("frameAge").textContent,
+    status: document.getElementById("status").hidden ? null : document.getElementById("statusText").textContent,
+    trackMsg: document.getElementById("trackMsg").hidden ? null : document.getElementById("trackMsg").textContent,
+    cloud: document.getElementById("cloudKind").textContent,
+    radar: [...document.querySelectorAll("img.radar-img")].map(i => i.naturalWidth),
+  }));
+  await page.screenshot({ path: join(OUT, `live-${mode.replace(/\W+/g, "-")}.png`) });
+  notes.push(`[${mode}] frames: ${s.count} | age: ${s.age} | status: ${s.status ?? "hidden"} | tracks: ${s.trackMsg ?? "ok"} | clouds: ${s.cloud || "off"} | tiles ok: ${tiles.ok}`);
+  if (tiles.ok === 0) failures.push(`[${mode}] no map tiles loaded`);
+  if (tiles.bad.length) failures.push(`[${mode}] ${tiles.bad.length} tile(s) failed, e.g. ${tiles.bad[0]}`);
+  if (s.status === null && !s.radar.some(w => w === 640)) failures.push(`[${mode}] radar image not showing on the map`);
+  if (/✕/.test(s.cloud)) failures.push(`[${mode}] cloud layer failed to load`);
+  await ctx.close();
+}
+await browser.close();
+notes.forEach(n => console.log(n));
+failures.forEach(f => console.log("FAIL " + f));
+console.log(failures.length ? `\n${failures.length} problem(s)` : "\nLive check passed");
+process.exit(failures.length ? 1 : 0);
