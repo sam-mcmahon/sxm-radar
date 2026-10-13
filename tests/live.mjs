@@ -77,12 +77,19 @@ for (const mode of ["dark", "satellite+clouds", "infrared"]) {
     if (src && src.startsWith("https://www.meteosxm.com")) {
       try {
         const img = jpeg.decode(Buffer.from(await (await fetch(src)).arrayBuffer()), { useTArray: true });
-        let rain = 0;
+        let rain = 0, near = 0, nearest = 1e9, nb = 0;
+        const km = (src.includes("_240_") ? 240 : 150) / 239.5;
+        const gc = { e: (-63.057 + 63.076) * 105.9, n: (18.103 - 18.041) * 111.2 }; // Grand Case, km from the radar
         for (let y = 81; y < 559; y++) for (let x = 0; x < 479; x++) {
           const i = (y * img.width + x) * 4, r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
-          if (Math.min(r, g, b) < 51 && Math.max(r, g, b) > 153) rain++;
+          if (!(Math.min(r, g, b) < 51 && Math.max(r, g, b) > 153)) continue;
+          rain++;
+          const de = (x - 239.5) * km - gc.e, dn = (319 - y) * km - gc.n, d = Math.hypot(de, dn);
+          if (d < 25) near++;
+          if (d < nearest) { nearest = d; nb = (Math.atan2(de, dn) * 180 / Math.PI + 360) % 360; }
         }
-        notes.push(`[dark] rain pixels in the real scan ${src.split("_").pop()}: ${rain}${rain < 30 ? " (little or no rain right now)" : ""}`);
+        const dir = ["N","NE","E","SE","S","SW","W","NW"][Math.round(nb / 45) % 8];
+        notes.push(`[dark] real scan ${src.split("_").pop()}: ${rain} rain pixels; within 25 km of Grand Case: ${near}; nearest rain ${nearest.toFixed(0)} km ${dir} of Grand Case`);
       } catch (e) { notes.push(`[dark] could not read the real scan: ${e.message}`); }
     }
   }
