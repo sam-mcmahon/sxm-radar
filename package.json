@@ -7,7 +7,9 @@
     "test:live": "node tests/live.mjs"
   },
   "devDependencies": {
+    "jpeg-js": "^0.4.4",
     "leaflet": "1.9.4",
-    "playwright-core": "1.47.2"
+    "playwright-core": "1.47.2",
+    "pngjs": "^7.0.0"
   }
 }

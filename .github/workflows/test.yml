@@ -17,12 +17,16 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npx playwright@1.47.2 install --with-deps chromium
-      - name: Offline tests
+      - run: npx playwright@1.47.2 install --with-deps chromium webkit
+      - name: Offline tests (Chrome and Safari engines)
         run: npm test
+        env:
+          BROWSERS: chromium,webkit
       - name: Wait for GitHub Pages to publish this commit
+        if: always()
         run: sleep 90
       - name: Live check
+        if: always()
         run: npm run test:live
       - if: always()
         uses: actions/upload-artifact@v4

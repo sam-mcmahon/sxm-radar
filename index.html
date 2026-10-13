@@ -64,6 +64,8 @@ body {
 /* Radar echoes: the Met Office JPEG is keyed so only rain colors remain (filter in the SVG below),
    and clipped to the map panel so the legend box and black frame never show. */
 .radar-img { filter: url(#echoKey); clip-path: inset(12.66% 25.16% 12.66% 0%); }
+/* Infrared clouds in white/grey so they never read as rain; they fade when zoomed in past their ~2 km pixels. */
+.clouds-ir { filter: grayscale(1) brightness(1.15); }
 
 .status {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 900;
@@ -311,6 +313,13 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     color: { label: "COLOR", layer: "GOES-East_ABI_GeoColor", level: 7, ext: "png", lagMin: 90 },
   };
   let cloudLayer = null;
+  // Full strength at island scale, fading out once the satellite pixels get blocky.
+  const cloudOpacity = () => {
+    const base = state.clouds === "ir" ? .55 : .7, z = map.getZoom();
+    const fadeFrom = state.clouds === "ir" ? 9.5 : 10.5;
+    return z <= fadeFrom ? base : Math.max(0.12, base * (1 - (z - fadeFrom) / 2.5));
+  };
+  map.on("zoomend", () => { if (cloudLayer) cloudLayer.setOpacity(cloudOpacity()); });
   function applyClouds() {
     if (cloudLayer) { map.removeLayer(cloudLayer); cloudLayer = null; }
     const c = CLOUDS[state.clouds];
@@ -320,7 +329,7 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     const t = new Date(Date.now() - c.lagMin * 60000); t.setUTCMinutes(Math.floor(t.getUTCMinutes() / 10) * 10, 0, 0);
     const time = t.toISOString().slice(0, 19) + "Z";
     cloudLayer = L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${c.layer}/default/${time}/GoogleMapsCompatible_Level${c.level}/{z}/{y}/{x}.${c.ext}`, {
-      maxNativeZoom: c.level, maxZoom: 19, opacity: state.clouds === "ir" ? .55 : .7, className: "clouds",
+      maxNativeZoom: c.level, maxZoom: 19, opacity: cloudOpacity(), className: "clouds clouds-" + state.clouds,
       attribution: "Clouds: NASA GIBS / NOAA GOES-East",
     });
     cloudLayer.on("tileerror", () => { $("cloudKind").textContent = c.label + " ✕"; });

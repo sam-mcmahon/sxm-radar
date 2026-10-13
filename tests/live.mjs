@@ -2,6 +2,7 @@
 // Met Office radar, the real map and cloud tile servers. Read-only; it changes nothing.
 // Run: npm run test:live [url]     (default: the GitHub Pages site)
 import { chromium } from "playwright-core";
+import jpeg from "jpeg-js";
 import { mkdirSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +71,21 @@ for (const mode of ["dark", "satellite+clouds", "infrared"]) {
     radar: [...document.querySelectorAll("img.radar-img")].map(i => i.naturalWidth),
   }));
   await page.screenshot({ path: join(OUT, `live-${mode.replace(/\W+/g, "-")}.png`) });
+  if (mode === "dark") {
+    // How much rain is in the real scan being shown? (Node can read the pixels; browsers on other sites can't.)
+    const src = await page.evaluate(() => document.querySelector("img.radar-img")?.src);
+    if (src && src.startsWith("https://www.meteosxm.com")) {
+      try {
+        const img = jpeg.decode(Buffer.from(await (await fetch(src)).arrayBuffer()), { useTArray: true });
+        let rain = 0;
+        for (let y = 81; y < 559; y++) for (let x = 0; x < 479; x++) {
+          const i = (y * img.width + x) * 4, r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
+          if (Math.min(r, g, b) < 51 && Math.max(r, g, b) > 153) rain++;
+        }
+        notes.push(`[dark] rain pixels in the real scan ${src.split("_").pop()}: ${rain}${rain < 30 ? " (little or no rain right now)" : ""}`);
+      } catch (e) { notes.push(`[dark] could not read the real scan: ${e.message}`); }
+    }
+  }
   notes.push(`[${mode}] frames: ${s.count} | age: ${s.age} | status: ${s.status ?? "hidden"} | tracks: ${s.trackMsg ?? "ok"} | clouds: ${s.cloud || "off"} | tiles ok: ${tiles.ok}`);
   if (tiles.ok === 0) failures.push(`[${mode}] no map tiles loaded`);
   if (tiles.bad.length) failures.push(`[${mode}] ${tiles.bad.length} tile(s) failed, e.g. ${tiles.bad[0]}`);

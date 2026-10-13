@@ -3,7 +3,8 @@
 // radar scans come from tests/fixtures (named with timestamps relative to "now"),
 // map/cloud tiles get a blank PNG, Leaflet comes from node_modules.
 // Run: npm test            (screenshots land in tests/out/)
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
+import { PNG } from "pngjs";
 import { readFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,8 +44,9 @@ function schedule(count, ageMin) {
   });
 }
 
-async function scenario(browser, name, { scans = [], cors = true, expect, timeout = 60000 }) {
+async function scenario(browser, name, { scans = [], cors = true, expect, timeout = 60000, init = null, visual = false }) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  if (init) await ctx.addInitScript(init);
   const page = await ctx.newPage();
   const errors = [], tileHosts = new Set();
   page.on("pageerror", e => errors.push("pageerror: " + e.message));
@@ -104,6 +106,22 @@ async function scenario(browser, name, { scans = [], cors = true, expect, timeou
       cells: document.querySelectorAll("path.leaflet-interactive").length,
       overflowX: document.documentElement.scrollWidth > window.innerWidth,
     }));
+    if (visual) {
+      // Is the loop actually advancing, and do rain colours actually reach the screen?
+      const f1 = await page.textContent("#frameTime");
+      await page.waitForTimeout(3000);
+      result.animates = f1 !== await page.textContent("#frameTime");
+      const box = await page.locator("#map").boundingBox();
+      const clip = { x: box.x + box.width / 2 - 110, y: box.y + box.height / 2 - 110, width: 220, height: 220 };
+      const png = PNG.sync.read(await page.screenshot({ clip }));
+      let echo = 0;
+      for (let i = 0; i < png.data.length; i += 4) {
+        const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
+        if (Math.min(r, g, b) < 60 && Math.max(r, g, b) > 150) echo++;
+      }
+      result.echoPixels = echo;
+    }
+    result.cloudFilter = await page.evaluate(() => { const el = document.querySelector(".clouds-ir"); return el ? getComputedStyle(el).filter : null; });
   } catch (e) {
     result = { timeout: true, statusText: await page.$eval("#statusText", el => el.textContent).catch(() => "?") };
   }
@@ -130,9 +148,12 @@ const common = r => {
   return f;
 };
 
+// Centre the map on the fixture storm (~50 km E, ~38 km N of the radar) at island zoom.
+const ON_STORM = () => { localStorage.setItem("sxm.view", "[18.38,-62.61]"); localStorage.setItem("sxm.zoom", "10"); };
+
 const SCENARIOS = {
   "live-radar": {
-    scans: schedule(6, 2),
+    scans: schedule(6, 2), init: ON_STORM, visual: true,
     expect: {
       ready: () => document.getElementById("tCount").textContent.startsWith("6 frames") && document.getElementById("status").hidden
         && document.querySelectorAll("path.leaflet-interactive").length > 0,
@@ -142,6 +163,8 @@ const SCENARIOS = {
         ...(/latest/.test(r.age) ? [] : [`age label should say latest, got "${r.age}"`]),
         ...(r.cells > 0 ? [] : ["no storm cell was tracked"]),
         ...(r.trackMsg ? [`unexpected track message: ${r.trackMsg}`] : []),
+        ...(r.animates ? [] : ["the loop is not animating (frame time did not change while playing)"]),
+        ...(r.echoPixels >= 40 ? [] : [`rain is not visible on screen (${r.echoPixels} rain-coloured pixels where the storm should be)`]),
       ],
     },
   },
@@ -159,6 +182,13 @@ const SCENARIOS = {
       check: r => (r.status && /hasn't posted/.test(r.status) ? [] : ["offline message not shown"]),
     },
   },
+  "ir-clouds": {
+    scans: schedule(6, 2), init: () => localStorage.setItem("sxm.clouds", '"ir"'),
+    expect: {
+      ready: () => document.getElementById("status").hidden && !!document.querySelector(".clouds-ir"),
+      check: r => [...common(r), ...(/grayscale/.test(r.cloudFilter || "") ? [] : [`IR clouds should be drawn in grey, filter is "${r.cloudFilter}"`])],
+    },
+  },
   "no-pixel-access": {
     scans: schedule(6, 2), cors: false,
     expect: {
@@ -168,17 +198,22 @@ const SCENARIOS = {
   },
 };
 
+// BROWSERS=chromium,webkit runs every scenario in both engines (WebKit ≈ Safari on iPhone).
 const only = process.argv[2];
-const browser = await chromium.launch({ executablePath: chromePath(), args: ["--headless=new"] });
+const engines = (process.env.BROWSERS || "chromium").split(",");
 let failed = 0;
-for (const [name, cfg] of Object.entries(SCENARIOS)) {
-  if (only && only !== name) continue;
-  const r = await scenario(browser, name, cfg);
-  const ok = r.failures.length === 0;
-  if (!ok) failed++;
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}  (${r.secs}s)`);
-  r.failures.forEach(f => console.log("      - " + f));
+for (const engine of engines) {
+  const browser = engine === "webkit" ? await webkit.launch() : await chromium.launch({ executablePath: chromePath(), args: ["--headless=new"] });
+  for (const [name, cfg] of Object.entries(SCENARIOS)) {
+    if (only && only !== name) continue;
+    const r = await scenario(browser, `${engine}-${name}`, cfg);
+    const ok = r.failures.length === 0;
+    if (!ok) failed++;
+    const gha = process.env.GITHUB_ACTIONS;
+    console.log(`${ok ? "PASS" : "FAIL"}  ${engine}  ${name}  (${r.secs}s)`);
+    r.failures.forEach(f => console.log(gha ? `::error title=${engine} ${name}::${f}` : "      - " + f));
+  }
+  await browser.close();
 }
-await browser.close();
 console.log(failed ? `\n${failed} scenario(s) failed` : "\nAll scenarios passed");
 process.exit(failed ? 1 : 0);
