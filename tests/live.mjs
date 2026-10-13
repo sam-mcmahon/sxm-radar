@@ -18,6 +18,22 @@ function chromePath() {
   return undefined;
 }
 
+// Cloud layer diagnostics: what NASA GIBS advertises for the GOES-East layers we use.
+if (process.env.GITHUB_ACTIONS) {
+  try {
+    const cap = await (await fetch("https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/1.0.0/WMTSCapabilities.xml")).text();
+    for (const id of ["GOES-East_ABI_Band13_Clean_Infrared", "GOES-East_ABI_Band2_Red_Visible_1km", "GOES-East_ABI_GeoColor"]) {
+      const i = cap.indexOf(`<ows:Identifier>${id}</ows:Identifier>`);
+      if (i < 0) { console.log(`::notice title=gibs::${id}: not in capabilities`); continue; }
+      const block = cap.slice(cap.lastIndexOf("<Layer>", i), cap.indexOf("</Layer>", i));
+      const tms = (block.match(/<TileMatrixSet>([^<]+)/) || [])[1], fmt = (block.match(/<Format>([^<]+)/) || [])[1];
+      const def = (block.match(/<Default>([^<]+)/) || [])[1], val = (block.match(/<Value>([^<]+)/g) || []).slice(-1)[0];
+      const tmpl = (block.match(/template="([^"]+)"/) || [])[1];
+      console.log(`::notice title=gibs::${id}: tms=${tms} fmt=${fmt} default=${def} last=${val} tmpl=${tmpl}`);
+    }
+  } catch (e) { console.log(`::notice title=gibs::capabilities fetch failed: ${e.message}`); }
+}
+
 const browser = await chromium.launch({ executablePath: chromePath(), args: ["--headless=new"] });
 const failures = [], notes = [];
 for (const mode of ["dark", "satellite+clouds"]) {
@@ -26,6 +42,7 @@ for (const mode of ["dark", "satellite+clouds"]) {
   const page = await ctx.newPage();
   const tiles = { ok: 0, bad: [] };
   page.on("pageerror", e => failures.push(`[${mode}] page error: ${e.message}`));
+  page.on("requestfailed", r => { if (/gibs|arcgis|meteosxm/.test(r.url()) && !/\?px/.test(r.url())) tiles.bad.push(`network ${r.failure()?.errorText} ${r.url().slice(0, 140)}`); });
   page.on("response", r => {
     const u = r.url();
     if (!/arcgisonline|gibs\.earthdata|cartocdn|tile\./.test(u)) return;
