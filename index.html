@@ -268,7 +268,7 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     sec: store.get("sec", 51), interval: store.get("interval", 5),
     frames: [], idx: 0, playing: false, timer: null, busy: false,
     showRadar: store.get("showRadar", true), showTracks: store.get("showTracks", true),
-    clouds: store.get("clouds", "off"), satBase: store.get("satBase", false),
+    clouds: ["ir", "color"].includes(store.get("clouds", "off")) ? store.get("clouds", "off") : "off", satBase: store.get("satBase", false),
   };
   const SPEEDS = [{ l: "½×", ms: 900 }, { l: "1×", ms: 500 }, { l: "2×", ms: 250 }];
   const $ = id => document.getElementById(id);
@@ -304,9 +304,11 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
   ).concat(L.circleMarker([RADAR.lat, RADAR.lon], { radius: 3, color: "#5ef2b0", weight: 1, fillOpacity: 1, interactive: false }))).addTo(map);
 
   // Clouds: NASA GIBS GOES-East tiles (latest available image).
+  // Levels and lag checked against NASA's WMTS capabilities (IR tops out at Level 6, GeoColor at 7;
+  // images appear roughly 60–70 min after the scan time).
   const CLOUDS = {
-    ir: { label: "IR", layer: "GOES-East_ABI_Band13_Clean_Infrared", level: 7, ext: "png" },
-    vis: { label: "VIS", layer: "GOES-East_ABI_Band2_Red_Visible_1km", level: 8, ext: "png" },
+    ir: { label: "IR", layer: "GOES-East_ABI_Band13_Clean_Infrared", level: 6, ext: "png", lagMin: 80 },
+    color: { label: "COLOR", layer: "GOES-East_ABI_GeoColor", level: 7, ext: "png", lagMin: 90 },
   };
   let cloudLayer = null;
   function applyClouds() {
@@ -315,10 +317,10 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     $("cClouds").setAttribute("aria-pressed", !!c);
     $("cloudKind").textContent = c ? c.label : "";
     if (!c) return;
-    const t = new Date(Date.now() - 40 * 60000); t.setUTCMinutes(Math.floor(t.getUTCMinutes() / 10) * 10, 0, 0);
+    const t = new Date(Date.now() - c.lagMin * 60000); t.setUTCMinutes(Math.floor(t.getUTCMinutes() / 10) * 10, 0, 0);
     const time = t.toISOString().slice(0, 19) + "Z";
     cloudLayer = L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${c.layer}/default/${time}/GoogleMapsCompatible_Level${c.level}/{z}/{y}/{x}.${c.ext}`, {
-      maxNativeZoom: c.level, maxZoom: 19, opacity: state.clouds === "ir" ? .55 : .6, className: "clouds",
+      maxNativeZoom: c.level, maxZoom: 19, opacity: state.clouds === "ir" ? .55 : .7, className: "clouds",
       attribution: "Clouds: NASA GIBS / NOAA GOES-East",
     });
     cloudLayer.on("tileerror", () => { $("cloudKind").textContent = c.label + " ✕"; });
@@ -630,7 +632,7 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     state.showTracks = !state.showTracks; store.set("showTracks", state.showTracks); $("cTracks").setAttribute("aria-pressed", state.showTracks);
     if (state.showTracks) { trackLayer.addTo(map); updateTracks(); } else { map.removeLayer(trackLayer); $("trackMsg").hidden = true; }
   };
-  $("cClouds").onclick = () => { state.clouds = { off: "ir", ir: "vis", vis: "off" }[state.clouds] || "off"; store.set("clouds", state.clouds); applyClouds(); };
+  $("cClouds").onclick = () => { state.clouds = { off: "color", color: "ir", ir: "off" }[state.clouds] || "off"; store.set("clouds", state.clouds); applyClouds(); };
   $("cBase").onclick = () => { state.satBase = !state.satBase; store.set("satBase", state.satBase); applyBase(); };
   map.on("zoomend", () => { if (state.showTracks) updateTracks(); });
 

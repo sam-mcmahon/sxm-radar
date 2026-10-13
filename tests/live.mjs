@@ -36,18 +36,21 @@ if (process.env.GITHUB_ACTIONS) {
 
 const browser = await chromium.launch({ executablePath: chromePath(), args: ["--headless=new"] });
 const failures = [], notes = [];
-for (const mode of ["dark", "satellite+clouds"]) {
+for (const mode of ["dark", "satellite+clouds", "infrared"]) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
-  if (mode !== "dark") await ctx.addInitScript(() => { localStorage.setItem("sxm.satBase", "true"); localStorage.setItem("sxm.clouds", '"ir"'); });
+  if (mode === "infrared") await ctx.addInitScript(() => localStorage.setItem("sxm.clouds", '"ir"'));
+  if (mode === "satellite+clouds") await ctx.addInitScript(() => { localStorage.setItem("sxm.satBase", "true"); localStorage.setItem("sxm.clouds", '"color"'); });
   const page = await ctx.newPage();
   const tiles = { ok: 0, bad: [] };
   page.on("pageerror", e => failures.push(`[${mode}] page error: ${e.message}`));
-  page.on("requestfailed", r => { if (/gibs|arcgis|meteosxm/.test(r.url()) && !/\?px/.test(r.url())) tiles.bad.push(`network ${r.failure()?.errorText} ${r.url().slice(0, 140)}`); });
+  // The app's scan-name guesses 404 by design, and Esri's label layer has no tiles over open ocean.
+  page.on("requestfailed", r => { if (/gibs|arcgis/.test(r.url()) && !/_Reference|World_Boundaries/.test(r.url())) tiles.bad.push(`network ${r.failure()?.errorText} ${r.url().slice(0, 140)}`); });
   page.on("response", r => {
     const u = r.url();
     if (!/arcgisonline|gibs\.earthdata|cartocdn|tile\./.test(u)) return;
     const type = r.headers()["content-type"] || "";
     if (r.status() === 200 && type.startsWith("image/")) tiles.ok++;
+    else if (r.status() === 404 && /_Reference|World_Boundaries/.test(u)) return;
     else tiles.bad.push(`${r.status()} ${type} ${u.slice(0, 120)}`);
   });
   await page.goto(SITE, { waitUntil: "load" });
