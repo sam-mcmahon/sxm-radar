@@ -274,7 +274,7 @@ a { color: var(--phosphor); }
     $("refresh").disabled = true;
     try {
       const now = new Date();
-      setStatus(state.frames.length ? null : "Looking for the newest scan…");
+      if (!state.frames.length) setStatus("Looking for the newest scan…");
       let latest = await findBefore(now, 40);
       if (!latest) {
         setStatus("Still looking — trying every second of the last half hour…");
@@ -329,6 +329,7 @@ a { color: var(--phosphor); }
   function showFrames(frames, jumpToLatest) {
     const wasAtEnd = state.idx >= state.frames.length - 1;
     state.frames = frames;
+    if (frames.length) setStatus(null);
     const sc = $("scrub");
     sc.max = Math.max(0, frames.length - 1);
     if (jumpToLatest || wasAtEnd) state.idx = frames.length - 1;
