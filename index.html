@@ -473,8 +473,8 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     const mins = Math.round((Date.now() - d) / 60000);
     const el = $("frameAge");
     const ago = mins <= 0 ? "just now" : mins < 90 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
-    el.textContent = ago + (d === latest ? (mins > 20 ? " · radar quiet" : " · latest") : "");
-    el.classList.toggle("stale", d === latest && mins > 20);
+    el.textContent = ago + (d === latest ? (mins > 60 ? " · radar quiet" : " · latest") : "");
+    el.classList.toggle("stale", d === latest && mins > 60);
   }
 
   // ---- Storm tracks --------------------------------------------------------

@@ -10,6 +10,8 @@ Single-page radar viewer (`index.html`) for the St. Peters, Sint Maarten weather
    including anything it could not verify.
 
 ## Facts the code depends on
-- Scan images: `https://www.meteosxm.com/radar/meteosxm.com/radar/{displayone|displaytwo}/CAP_Z_010_{150|240}_YYYYMMDDHHMMSS.jpg`, UTC, every 5 min at ~:51 s.
+- Scan images: `https://www.meteosxm.com/radar/meteosxm.com/radar/{displayone|displaytwo}/CAP_Z_010_{150|240}_YYYYMMDDHHMMSS.jpg`, UTC, every 5 min at ~:51 s. Scans appear on the site ~30–40 min after scan time (normal), so "radar quiet" starts at 60 min.
 - Image geometry: 640×640, map panel x 0–479 / y 81–559, radar at panel centre (18.041 N, 63.076 W), panel spans ± range km.
+- NASA GIBS: Band13 IR max GoogleMapsCompatible_Level6, GeoColor Level7; images publish ~60–70 min after scan time.
+- The Met Office server does not allow cross-site pixel reads, so storm tracks need a relay (not built yet).
 - Map tiles must come from keyless providers (Esri, NASA GIBS). CARTO now requires an API key.
