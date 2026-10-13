@@ -58,7 +58,9 @@ for (const mode of ["dark", "satellite+clouds"]) {
   await ctx.close();
 }
 await browser.close();
-notes.forEach(n => console.log(n));
-failures.forEach(f => console.log("FAIL " + f));
+// In GitHub Actions also emit annotations, which show up in `gh run view` without needing the logs.
+const gha = !!process.env.GITHUB_ACTIONS;
+notes.forEach(n => console.log(gha ? `::notice title=live::${n}` : n));
+failures.forEach(f => console.log(gha ? `::error title=live::${f}` : "FAIL " + f));
 console.log(failures.length ? `\n${failures.length} problem(s)` : "\nLive check passed");
 process.exit(failures.length ? 1 : 0);
