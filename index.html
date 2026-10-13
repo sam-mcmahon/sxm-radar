@@ -12,25 +12,27 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: a full-bleed radar scope; one status strip on top, one console of controls at the bottom. */
+/* Layout: a full-bleed map scope; a status strip on top, layer chips floating at right, one control console at the bottom. */
 :root {
-  --scope: #0b1114;       /* page ground, a blue-green black like an old PPI tube */
-  --panel: #131c20;       /* console surfaces */
-  --line: #22323a;        /* hairlines and track */
-  --ink: #dbe6e4;         /* primary text */
-  --dim: #7f9692;         /* secondary text */
-  --phosphor: #5ef2b0;    /* accent: sweep green */
-  --amber: #ffb547;       /* stale / warning */
-  --red: #ff6b5e;         /* error */
+  --scope: #0b1114;
+  --panel: rgba(19, 28, 32, .94);
+  --line: #2a3b43;
+  --ink: #dbe6e4;
+  --dim: #8aa19d;
+  --phosphor: #5ef2b0;
+  --amber: #ffb547;
+  --red: #ff6b5e;
   --ui: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--scope); color: var(--ink);
@@ -40,92 +42,132 @@ body {
 }
 .app { height: 100%; display: grid; grid-template-rows: auto 1fr auto; }
 
-/* Top strip */
 .top {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
-  background: linear-gradient(var(--scope), rgba(11,17,20,.85));
-  border-bottom: 1px solid var(--line);
-  z-index: 2;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px;
+  background: var(--scope); border-bottom: 1px solid var(--line); z-index: 1000;
 }
 .site { display: flex; flex-direction: column; min-width: 0; }
 .site b { font-size: 19px; font-weight: 700; letter-spacing: .02em; }
 .site span { font-size: 12px; color: var(--dim); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.clock { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.clock .t { font-size: 18px; color: var(--ink); }
+.clock { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; flex: none; }
+.clock .t { font-size: 18px; }
 .clock .age { font-size: 12px; color: var(--dim); }
 .clock .age.stale { color: var(--amber); }
 
-/* Scope */
-.scope { position: relative; overflow: hidden; touch-action: none; min-height: 0; }
-.stage { position: absolute; inset: 0; display: grid; place-items: center; transform-origin: 0 0; will-change: transform; }
-.stage img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; -webkit-user-drag: none; pointer-events: none; }
+.scope { position: relative; min-height: 0; }
+#map { position: absolute; inset: 0; background: #0d1417; }
+.leaflet-container { font-family: var(--ui); }
+.leaflet-control-attribution { background: rgba(11,17,20,.7) !important; color: var(--dim) !important; font-size: 10px; }
+.leaflet-control-attribution a { color: var(--dim) !important; }
+
+/* Radar echoes: the Met Office JPEG is keyed so only rain colors remain (filter in the SVG below),
+   and clipped to the map panel so the legend box and black frame never show. */
+.radar-img { filter: url(#echoKey); clip-path: inset(12.66% 25.16% 12.66% 0%); }
+
 .status {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  width: min(320px, calc(100% - 32px)); text-align: center;
-  font-family: var(--mono); font-size: 13px; color: var(--dim);
-  display: grid; gap: 14px; justify-items: center;
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 900;
+  width: min(320px, calc(100% - 32px)); text-align: center; pointer-events: none;
+  font-family: var(--mono); font-size: 13px; color: var(--ink);
+  background: rgba(11,17,20,.82); border: 1px solid var(--line); border-radius: 10px; padding: 16px;
+  display: grid; gap: 12px; justify-items: center;
 }
 .status.err { color: var(--red); }
-.sweep {
-  width: 72px; height: 72px; border-radius: 50%; position: relative;
-  border: 1px solid var(--line);
-  background:
-    radial-gradient(circle, transparent 32%, var(--line) 33%, transparent 34%),
-    radial-gradient(circle, transparent 65%, var(--line) 66%, transparent 67%);
-}
-.sweep::after {
-  content: ""; position: absolute; inset: 0; border-radius: 50%;
-  background: conic-gradient(from 0deg, rgba(94,242,176,.55), transparent 25%);
-  animation: spin 2s linear infinite;
-}
+.sweep { width: 56px; height: 56px; border-radius: 50%; position: relative; border: 1px solid var(--line); }
+.sweep::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 0deg, rgba(94,242,176,.6), transparent 25%); animation: spin 2s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .sweep::after { animation: none; } }
-.zoomhint {
-  position: absolute; right: 12px; bottom: 10px; font-family: var(--mono); font-size: 11px;
-  color: var(--dim); background: rgba(11,17,20,.7); padding: 3px 7px; border-radius: 4px;
+
+/* Floating layer chips */
+.chips { position: absolute; right: 10px; top: 10px; z-index: 950; display: grid; gap: 8px; justify-items: end; }
+.chip {
+  font: 600 13px/1 var(--ui); letter-spacing: .05em; text-transform: uppercase;
+  color: var(--dim); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 999px; padding: 9px 12px; cursor: pointer; display: inline-flex; gap: 7px; align-items: center;
 }
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.chip[aria-pressed=true] { color: var(--ink); border-color: var(--phosphor); }
+.chip[aria-pressed=true] i { background: var(--phosphor); }
+.chip .v { color: var(--phosphor); }
+.chip:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--phosphor); outline-offset: 2px; }
+.locate { width: 40px; height: 40px; padding: 0; justify-content: center; border-radius: 50%; }
+.locate svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+.legend {
+  position: absolute; left: 10px; bottom: 26px; z-index: 950;
+  display: flex; align-items: flex-end; gap: 6px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; font-family: var(--mono); font-size: 10px; color: var(--dim);
+}
+.legend .bar { width: 120px; height: 8px; border-radius: 2px; }
+.legend .ticks { display: flex; justify-content: space-between; width: 120px; margin-top: 2px; }
+
+.trackmsg { position: absolute; left: 10px; top: 10px; z-index: 950; max-width: calc(100% - 140px);
+  font-family: var(--mono); font-size: 11px; color: var(--dim); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
+
+/* Storm track markers */
+.cell-pin { font: 600 11px/1 var(--mono); color: #fff; text-shadow: 0 0 3px #000, 0 0 2px #000; white-space: nowrap; }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #131c20; color: var(--ink); border: 1px solid var(--line); }
+.leaflet-popup-content { font: 500 14px/1.35 var(--ui); margin: 10px 14px; }
+.leaflet-popup-content b { font-size: 16px; }
+.leaflet-popup-content .m { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+.you { width: 16px; height: 16px; border-radius: 50%; background: #3fa9ff; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(63,169,255,.25); }
 
 /* Console */
 .console {
-  background: var(--panel); border-top: 1px solid var(--line);
-  padding: 12px 16px calc(env(safe-area-inset-bottom, 0px) + 12px);
-  display: grid; gap: 12px; z-index: 2;
+  background: #131c20; border-top: 1px solid var(--line);
+  padding: 10px 16px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  display: grid; gap: 10px; z-index: 1000;
 }
 .row { display: flex; align-items: center; gap: 10px; min-width: 0; }
-button {
-  font: inherit; color: var(--ink); background: transparent;
-  border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; cursor: pointer;
-}
-button:focus-visible, input:focus-visible { outline: 2px solid var(--phosphor); outline-offset: 2px; }
+button { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
 button:active { background: var(--line); }
-.play {
-  width: 48px; height: 48px; border-radius: 50%; padding: 0; flex: none;
-  display: grid; place-items: center; border-color: var(--phosphor); color: var(--phosphor);
-}
+.play { width: 46px; height: 46px; border-radius: 50%; padding: 0; flex: none; display: grid; place-items: center; border-color: var(--phosphor); color: var(--phosphor); }
 .play svg { width: 20px; height: 20px; fill: currentColor; }
-.scrub { flex: 1; min-width: 0; display: grid; gap: 4px; }
-input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; height: 28px; }
-.ticks { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.scrub { flex: 1; min-width: 0; display: grid; gap: 3px; }
+input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; height: 26px; }
+.ticks2 { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
-.seg button { border: 0; border-radius: 0; padding: 8px 12px; color: var(--dim); font-weight: 600; letter-spacing: .04em; }
+.seg button { border: 0; border-radius: 0; padding: 8px 11px; color: var(--dim); font-weight: 600; letter-spacing: .04em; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button[aria-pressed=true] { color: var(--scope); background: var(--phosphor); }
 .spacer { flex: 1; }
 .icon { padding: 8px 10px; display: inline-grid; place-items: center; }
 .icon svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.label { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
-a { color: var(--phosphor); }
 .foot { font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.foot a { text-decoration: none; }
+.foot a { color: var(--phosphor); text-decoration: none; }
 </style>
 </head>
 <body>
+<!-- Keys the Met Office image: keeps a pixel only if one color channel is low (<20%) AND one is high (>60%).
+     That is true for every color on the dBZ scale and false for the pastel sea, pastel land, black coastlines
+     and the grey out-of-range ring. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="echoKey" color-interpolation-filters="sRGB" x="0" y="0" width="1" height="1">
+    <feComponentTransfer in="SourceGraphic" result="lo">
+      <feFuncR type="discrete" tableValues="1 0 0 0 0"/>
+      <feFuncG type="discrete" tableValues="1 0 0 0 0"/>
+      <feFuncB type="discrete" tableValues="1 0 0 0 0"/>
+      <feFuncA type="discrete" tableValues="1"/>
+    </feComponentTransfer>
+    <feColorMatrix in="lo" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 1 1 0 0" result="loA"/>
+    <feComponentTransfer in="SourceGraphic" result="hi">
+      <feFuncR type="discrete" tableValues="0 0 0 1 1"/>
+      <feFuncG type="discrete" tableValues="0 0 0 1 1"/>
+      <feFuncB type="discrete" tableValues="0 0 0 1 1"/>
+      <feFuncA type="discrete" tableValues="1"/>
+    </feComponentTransfer>
+    <feColorMatrix in="hi" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 1 1 0 0" result="hiA"/>
+    <feComposite in="loA" in2="hiA" operator="arithmetic" k1="1" k2="0" k3="0" k4="0" result="mask"/>
+    <feComposite in="SourceGraphic" in2="mask" operator="in"/>
+  </filter>
+</svg>
+
 <div class="app">
   <header class="top">
     <div class="site">
       <b>St. Peters Doppler</b>
-      <span>Sint Maarten · Reflectivity · <span id="rangeLbl">150 km</span></span>
+      <span>Sint Maarten · Reflectivity · <span id="rangeLbl">auto range</span></span>
     </div>
     <div class="clock">
       <div class="t" id="frameTime">--:--</div>
@@ -133,27 +175,35 @@ a { color: var(--phosphor); }
     </div>
   </header>
 
-  <main class="scope" id="scope">
-    <div class="stage" id="stage"><img id="img" alt="Radar reflectivity image from the St. Peters weather radar"></div>
+  <main class="scope">
+    <div id="map"></div>
     <div class="status" id="status"><div class="sweep"></div><div id="statusText">Looking for the newest scan…</div></div>
-    <div class="zoomhint" id="zoomhint" hidden>Pinch to zoom · double-tap to reset</div>
+    <div class="trackmsg" id="trackMsg" hidden></div>
+    <div class="chips">
+      <button class="chip" id="cRadar" aria-pressed="true"><i></i>Radar</button>
+      <button class="chip" id="cTracks" aria-pressed="true"><i></i>Tracks</button>
+      <button class="chip" id="cClouds" aria-pressed="false"><i></i>Clouds <span class="v" id="cloudKind"></span></button>
+      <button class="chip" id="cBase" aria-pressed="false"><i></i>Satellite map</button>
+      <button class="chip locate" id="locate" aria-label="Show my location"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+    </div>
+    <div class="legend" aria-label="Reflectivity scale in dBZ">
+      <div>
+        <div class="bar" style="background:linear-gradient(90deg,#0081e4,#00bebf,#009c96,#008855,#00a132,#00ce1d,#0df013,#6eff22,#fef612,#fed600,#ffae00,#ff8101,#fb4001,#dd0917,#d50085,#ff00ff)"></div>
+        <div class="ticks"><span>5</span><span>20</span><span>35</span><span>50</span><span>65</span></div>
+      </div>
+      <span>dBZ</span>
+    </div>
   </main>
 
   <footer class="console">
     <div class="row">
-      <button class="play" id="play" aria-label="Play loop">
-        <svg viewBox="0 0 24 24" id="playIcon"><path d="M7 4l13 8-13 8z"/></svg>
-      </button>
+      <button class="play" id="play" aria-label="Play loop"><svg viewBox="0 0 24 24" id="playIcon"><path d="M7 4l13 8-13 8z"/></svg></button>
       <div class="scrub">
         <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Frame">
-        <div class="ticks"><span id="tFirst">—</span><span id="tCount">0 frames</span><span id="tLast">—</span></div>
+        <div class="ticks2"><span id="tFirst">—</span><span id="tCount">0 frames</span><span id="tLast">—</span></div>
       </div>
     </div>
     <div class="row">
-      <div class="seg" role="group" aria-label="Range">
-        <button id="r150" aria-pressed="true">150 KM</button>
-        <button id="r250" aria-pressed="false">250 KM</button>
-      </div>
       <div class="seg" role="group" aria-label="Loop length">
         <button data-len="6" aria-pressed="false">6</button>
         <button data-len="12" aria-pressed="true">12</button>
@@ -161,61 +211,133 @@ a { color: var(--phosphor); }
       </div>
       <span class="spacer"></span>
       <button class="icon" id="speed" aria-label="Loop speed">1×</button>
-      <button class="icon" id="refresh" aria-label="Refresh now">
-        <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
-      </button>
+      <button class="icon" id="refresh" aria-label="Refresh now"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>
     </div>
     <div class="foot">
-      <span id="note">Times in Atlantic Standard Time (Grand Case)</span>
-      <a href="https://www.meteosxm.com/" target="_blank" rel="noopener">Source: Meteorological Dept. St. Maarten ↗</a>
+      <span>Times in AST (Grand Case)</span>
+      <a href="https://www.meteosxm.com/" target="_blank" rel="noopener">Radar: Met Dept. St. Maarten ↗</a>
     </div>
   </footer>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 (() => {
-  // ---- Data source -------------------------------------------------------
-  // The Met Dept publishes JPEGs named with the scan time in UTC:
-  //   .../displayone/CAP_Z_010_150_YYYYMMDDHHMMSS.jpg  (150 km)
-  //   .../displaytwo/CAP_Z_010_240_YYYYMMDDHHMMSS.jpg  (250 km)
-  // There is no index of frames, so the app finds them by asking for
-  // candidate timestamps and keeping the ones that load.
+  // ---- Radar geometry ----------------------------------------------------
+  // Calibrated against island positions in the Met Office images (fit error ~1 px):
+  // the radar sits at the centre of a square map panel (x 0–479, y 81–559 of a 640×640 JPEG)
+  // and the panel spans ± the product range in km.
+  const RADAR = { lat: 18.041, lon: -63.076 };
+  const IMG = 640, CX = 239.5, CY = 319.0, HALF = 239.5;
+  const PANEL = { x0: 0, x1: 479, y0: 81, y1: 559 };
   const BASE = "https://www.meteosxm.com/radar/meteosxm.com/radar/";
   const PRODUCTS = {
-    150: { dir: "displayone", code: "150", label: "150 km" },
-    250: { dir: "displaytwo", code: "240", label: "250 km" },
+    150: { dir: "displayone", code: "150", km: 150, label: "150 km" },
+    250: { dir: "displaytwo", code: "240", km: 240, label: "240 km" },
   };
-  const TZ = "America/Lower_Princes";   // AST, UTC-4, no DST
+  const TZ = "America/Lower_Princes";
   const REFRESH_MS = 2 * 60 * 1000;
+  const R_EARTH = 6371.0, D2R = Math.PI / 180;
 
+  const merc = lat => Math.log(Math.tan(Math.PI / 4 + lat * D2R / 2));
+  const invMerc = y => (2 * Math.atan(Math.exp(y)) - Math.PI / 2) / D2R;
+  const cosLat0 = Math.cos(RADAR.lat * D2R);
+  function kmToLatLng(east, north) {
+    const lon = RADAR.lon + east / (R_EARTH * cosLat0) / D2R;
+    const lat = invMerc(merc(RADAR.lat) + north / (R_EARTH * cosLat0));
+    return [lat, lon];
+  }
+  function pxToLatLng(px, py, km) {
+    const s = km / HALF;
+    return kmToLatLng((px - CX) * s, (CY - py) * s);
+  }
+  function imageBounds(km) {
+    const s = km / HALF;
+    const nw = kmToLatLng(-CX * s, CY * s);
+    const se = kmToLatLng((IMG - CX) * s, (CY - IMG) * s);
+    return L.latLngBounds([se[0], nw[1]], [nw[0], se[1]]);
+  }
+
+  // ---- Persistence -------------------------------------------------------
   const store = {
     get(k, d) { try { const v = localStorage.getItem("sxm." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem("sxm." + k, JSON.stringify(v)); } catch {} },
   };
-
   const state = {
-    range: store.get("range", 150),
-    loopLen: store.get("loopLen", 12),
-    speedIdx: store.get("speedIdx", 1),
-    sec: store.get("sec", 51),            // learned seconds offset of scan names
-    interval: store.get("interval", 5),   // learned minutes between scans
-    frames: [],                            // Date objects, oldest first
-    idx: 0, playing: false, timer: null, busy: false,
+    loopLen: store.get("loopLen", 12), speedIdx: store.get("speedIdx", 1),
+    sec: store.get("sec", 51), interval: store.get("interval", 5),
+    frames: [], idx: 0, playing: false, timer: null, busy: false,
+    showRadar: store.get("showRadar", true), showTracks: store.get("showTracks", true),
+    clouds: store.get("clouds", "off"), satBase: store.get("satBase", false),
   };
   const SPEEDS = [{ l: "½×", ms: 900 }, { l: "1×", ms: 500 }, { l: "2×", ms: 250 }];
-
   const $ = id => document.getElementById(id);
   const pad = n => String(n).padStart(2, "0");
-  const stamp = d => d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) +
-                     pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds());
-  const urlFor = (d, range = state.range) => {
-    const p = PRODUCTS[range];
-    return `${BASE}${p.dir}/CAP_Z_010_${p.code}_${stamp(d)}.jpg`;
-  };
+  const stamp = d => d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds());
+  const urlFor = (d, range) => { const p = PRODUCTS[range]; return `${BASE}${p.dir}/CAP_Z_010_${p.code}_${stamp(d)}.jpg`; };
   const fmt = d => d.toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
 
-  // ---- Probing -----------------------------------------------------------
-  const cache = new Map();        // url -> Promise<boolean>
+  // ---- Map ---------------------------------------------------------------
+  const map = L.map("map", { zoomControl: false, attributionControl: true, zoomSnap: 0.25, maxZoom: 14, minZoom: 5 })
+    .setView(store.get("view", [18.07, -63.06]), store.get("zoom", 10));
+  map.on("moveend", () => { store.set("view", [map.getCenter().lat, map.getCenter().lng]); store.set("zoom", map.getZoom()); });
+
+  const darkBase = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    subdomains: "abcd", maxZoom: 19,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>',
+  });
+  const satBase = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
+  });
+  const satLabels = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 19, pane: "shadowPane" });
+  function applyBase() {
+    [darkBase, satBase, satLabels].forEach(l => map.removeLayer(l));
+    if (state.satBase) { satBase.addTo(map); satLabels.addTo(map); } else darkBase.addTo(map);
+    $("cBase").setAttribute("aria-pressed", state.satBase);
+  }
+
+  // Range rings every 50 km around the radar.
+  const rings = L.layerGroup([50, 100, 150, 200].map(km =>
+    L.circle([RADAR.lat, RADAR.lon], { radius: km * 1000, color: "#5ef2b0", weight: 1, opacity: .18, fill: false, interactive: false })
+  ).concat(L.circleMarker([RADAR.lat, RADAR.lon], { radius: 3, color: "#5ef2b0", weight: 1, fillOpacity: 1, interactive: false }))).addTo(map);
+
+  // Clouds: NASA GIBS GOES-East tiles (latest available image).
+  const CLOUDS = {
+    ir: { label: "IR", layer: "GOES-East_ABI_Band13_Clean_Infrared", level: 7, ext: "png" },
+    vis: { label: "VIS", layer: "GOES-East_ABI_Band2_Red_Visible_1km", level: 8, ext: "png" },
+  };
+  let cloudLayer = null;
+  function applyClouds() {
+    if (cloudLayer) { map.removeLayer(cloudLayer); cloudLayer = null; }
+    const c = CLOUDS[state.clouds];
+    $("cClouds").setAttribute("aria-pressed", !!c);
+    $("cloudKind").textContent = c ? c.label : "";
+    if (!c) return;
+    const t = new Date(Date.now() - 40 * 60000); t.setUTCMinutes(Math.floor(t.getUTCMinutes() / 10) * 10, 0, 0);
+    const time = t.toISOString().slice(0, 19) + "Z";
+    cloudLayer = L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${c.layer}/default/${time}/GoogleMapsCompatible_Level${c.level}/{z}/{y}/{x}.${c.ext}`, {
+      maxNativeZoom: c.level, maxZoom: 19, opacity: state.clouds === "ir" ? .55 : .6, className: "clouds",
+      attribution: "Clouds: NASA GIBS / NOAA GOES-East",
+    });
+    cloudLayer.on("tileerror", () => { $("cloudKind").textContent = c.label + " ✕"; });
+    cloudLayer.addTo(map);
+  }
+
+  // Radar overlays (one per product, picked by zoom: the 150 km product has ~0.6 km pixels, 240 km ~1 km).
+  const overlays = {};
+  for (const r of [150, 250]) {
+    overlays[r] = L.imageOverlay("data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==", imageBounds(PRODUCTS[r].km),
+      { className: "radar-img", opacity: .9, interactive: false });
+  }
+  const activeRange = () => {
+    const b = map.getBounds(), c = map.getCenter();
+    const farKm = c.distanceTo([RADAR.lat, RADAR.lon]) / 1000 + b.getNorthEast().distanceTo(b.getSouthWest()) / 2000;
+    return farKm > 150 ? 250 : 150;
+  };
+  map.on("zoomend moveend", () => draw());
+
+  // ---- Frame discovery (scan files are named by UTC scan time) ------------
+  const cache = new Map();
   function probe(url) {
     if (cache.has(url)) return cache.get(url);
     const p = new Promise(res => {
@@ -229,141 +351,229 @@ a { color: var(--phosphor); }
     p.then(ok => { if (!ok) setTimeout(() => cache.delete(url), 60000); });
     return p;
   }
-  // Probe many URLs with limited parallelism; resolve with the first Date that loads (in list order).
   async function firstHit(dates, limit = 12) {
-    const results = new Array(dates.length);
     let next = 0, best = -1;
     async function worker() {
       while (next < dates.length) {
         const i = next++;
         if (best !== -1 && i > best) return;
-        results[i] = await probe(urlFor(dates[i], 150));
-        if (results[i] && (best === -1 || i < best)) best = i;
+        if (await probe(urlFor(dates[i], 150)) && (best === -1 || i < best)) best = i;
       }
     }
     await Promise.all(Array.from({ length: Math.min(limit, dates.length) }, worker));
     return best === -1 ? null : dates[best];
   }
-  const at = (base, minOff, sec) => {
-    const d = new Date(base); d.setUTCSeconds(0, 0);
-    d.setUTCMinutes(d.getUTCMinutes() + minOff); d.setUTCSeconds(sec); return d;
-  };
-  const secondsAround = (s, spread) => {
-    const out = [s];
-    for (let k = 1; k <= spread; k++) out.push((s + k) % 60, (s - k + 60) % 60);
-    return out;
-  };
+  const at = (base, minOff, sec) => { const d = new Date(base); d.setUTCSeconds(0, 0); d.setUTCMinutes(d.getUTCMinutes() + minOff); d.setUTCSeconds(sec); return d; };
+  const secondsAround = (s, spread) => { const o = [s]; for (let k = 1; k <= spread; k++) o.push((s + k) % 60, (s - k + 60) % 60); return o; };
   const ALL_SECS = Array.from({ length: 60 }, (_, i) => i);
-
-  // Find the newest scan at or before `from`, searching back `span` minutes.
   async function findBefore(from, span, wide = false) {
     for (let m = 0; m >= -span; m--) {
-      const secs = wide ? ALL_SECS : secondsAround(state.sec, 3);
-      const cands = secs.map(s => at(from, m, s)).filter(d => d <= from);
+      const cands = (wide ? ALL_SECS : secondsAround(state.sec, 3)).map(s => at(from, m, s)).filter(d => d <= from).sort((a, b) => b - a);
       if (!cands.length) continue;
-      cands.sort((a, b) => b - a);
       const hit = await firstHit(cands, wide ? 20 : 8);
       if (hit) return hit;
     }
     return null;
   }
-
   async function discover() {
     if (state.busy) return;
-    state.busy = true;
-    $("refresh").disabled = true;
+    state.busy = true; $("refresh").disabled = true;
     try {
       const now = new Date();
       if (!state.frames.length) setStatus("Looking for the newest scan…");
       let latest = await findBefore(now, 40);
-      if (!latest) {
-        setStatus("Still looking — trying every second of the last half hour…");
-        latest = await findBefore(now, 30, true);
-      }
-      if (!latest) {
-        if (!state.frames.length) setStatus("No recent scans found. The radar may be offline, or the Met Office changed its file names. Tap the source link below to check.", true);
-        return;
-      }
+      if (!latest) { if (!state.frames.length) setStatus("Still looking — checking every second of the last half hour…"); latest = await findBefore(now, 30, true); }
+      if (!latest) { if (!state.frames.length) setStatus("No recent scans found. The radar may be offline. Tap the source link below to check.", true); return; }
       state.sec = latest.getUTCSeconds(); store.set("sec", state.sec);
-
-      // Skip the walk if nothing new arrived.
-      const known = state.frames.length && state.frames[state.frames.length - 1].getTime() === latest.getTime();
+      const known = state.frames.length && +state.frames[state.frames.length - 1] === +latest;
       if (known && state.frames.length >= state.loopLen) return;
-
       const frames = [latest];
-      // Learn the interval from the previous scan.
-      let prev = await findBefore(new Date(latest.getTime() - 60000), 20);
-      if (!prev) prev = await findBefore(new Date(latest.getTime() - 60000), 15, true);
+      let prev = await findBefore(new Date(+latest - 60000), 20);
+      if (!prev) prev = await findBefore(new Date(+latest - 60000), 15, true);
       if (prev) {
-        const iv = Math.max(1, Math.round((latest - prev) / 60000));
-        state.interval = iv; store.set("interval", iv);
-        frames.unshift(prev);
-        setStatus(null); showFrames(frames.slice(), true);
-        // Walk back at the learned cadence.
+        const iv = Math.max(1, Math.round((latest - prev) / 60000)); state.interval = iv; store.set("interval", iv);
+        frames.unshift(prev); showFrames(frames.slice(), true);
         let cursor = prev, misses = 0;
         while (frames.length < state.loopLen && misses < 3) {
-          const target = new Date(cursor.getTime() - state.interval * 60000);
+          const target = new Date(+cursor - state.interval * 60000);
           const cands = [];
           for (const m of [0, -1, 1]) for (const s of secondsAround(state.sec, 4)) cands.push(at(target, m, s));
           let hit = await firstHit(cands);
-          if (!hit) hit = await findBefore(new Date(target.getTime() + 60000), 2, true);
-          if (hit && hit < cursor) { frames.unshift(hit); cursor = hit; misses = 0; showFrames(frames.slice(), false); }
-          else { cursor = target; misses++; }
+          if (!hit) hit = await findBefore(new Date(+target + 60000), 2, true);
+          if (hit && hit < cursor) { frames.unshift(hit); cursor = hit; misses = 0; showFrames(frames.slice(), false); } else { cursor = target; misses++; }
         }
       }
       showFrames(frames, !state.playing);
-    } finally {
-      state.busy = false;
-      $("refresh").disabled = false;
-    }
+      updateTracks();
+    } finally { state.busy = false; $("refresh").disabled = false; }
   }
 
   // ---- Display -----------------------------------------------------------
   function setStatus(text, err = false) {
     const el = $("status");
     if (!text) { el.hidden = true; return; }
-    el.hidden = false; el.classList.toggle("err", err);
-    el.querySelector(".sweep").hidden = err;
-    $("statusText").textContent = text;
+    el.hidden = false; el.classList.toggle("err", err); el.querySelector(".sweep").hidden = err; $("statusText").textContent = text;
   }
   function showFrames(frames, jumpToLatest) {
     const wasAtEnd = state.idx >= state.frames.length - 1;
     state.frames = frames;
     if (frames.length) setStatus(null);
-    const sc = $("scrub");
-    sc.max = Math.max(0, frames.length - 1);
+    $("scrub").max = Math.max(0, frames.length - 1);
     if (jumpToLatest || wasAtEnd) state.idx = frames.length - 1;
     state.idx = Math.min(state.idx, frames.length - 1);
     $("tFirst").textContent = frames.length ? fmt(frames[0]) : "—";
     $("tLast").textContent = frames.length ? fmt(frames[frames.length - 1]) : "—";
     $("tCount").textContent = `${frames.length} frame${frames.length === 1 ? "" : "s"}` + (frames.length > 1 ? ` · ${state.interval} min` : "");
-    // Preload the other range too so switching is instant.
-    frames.forEach(d => { new Image().src = urlFor(d); });
+    const r = activeRange(); frames.forEach(d => { new Image().src = urlFor(d, r); });
     draw();
   }
+  let shownRange = null;
   function draw() {
     const d = state.frames[state.idx];
     if (!d) return;
     $("scrub").value = state.idx;
-    const img = $("img");
-    const u = urlFor(d);
-    img.onerror = () => { if (state.range === 250) $("frameAge").textContent = "250 km image missing for this scan"; };
-    if (img.src !== u) img.src = u;
+    const r = activeRange();
+    $("rangeLbl").textContent = PRODUCTS[r].label;
+    if (shownRange !== r || !state.showRadar) { Object.values(overlays).forEach(o => map.removeLayer(o)); shownRange = null; }
+    if (state.showRadar) {
+      if (shownRange !== r) { overlays[r].addTo(map); shownRange = r; }
+      const u = urlFor(d, r);
+      if (overlays[r]._url !== u) overlays[r].setUrl(u);
+    }
     $("frameTime").textContent = fmt(d);
     updateAge();
-    $("zoomhint").hidden = zoom.s !== 1;
   }
   function updateAge() {
     const d = state.frames[state.idx]; if (!d) return;
     const latest = state.frames[state.frames.length - 1];
     const mins = Math.round((Date.now() - d) / 60000);
     const el = $("frameAge");
-    const isLatest = d === latest;
-    el.textContent = mins <= 0 ? "just now" : `${mins} min ago` + (isLatest ? " · latest" : "");
-    el.classList.toggle("stale", isLatest && mins > 20);
+    el.textContent = (mins <= 0 ? "just now" : `${mins} min ago`) + (d === latest ? " · latest" : "");
+    el.classList.toggle("stale", d === latest && mins > 20);
   }
 
-  // ---- Loop controls -----------------------------------------------------
+  // ---- Storm tracks --------------------------------------------------------
+  // Reads the 150 km frames pixel by pixel, finds rain cores (≥ 34 dBZ), follows each core from scan
+  // to scan and projects its motion 15–60 min ahead, like RadarScope's cell tracks.
+  // Needs the Met Office server to allow cross-site pixel reads; if it does not, the layer says so.
+  const LEGEND = [[66,255,0,255],[60,213,0,133],[55,221,9,23],[53,251,64,1],[50,255,129,1],[44,255,174,0],[39,254,214,0],[37,254,246,18],[34,110,255,34],[28,13,240,19],[23,0,206,29],[21,0,161,50],[18,0,136,85],[12,0,156,150],[7,0,190,191],[2,0,129,228]];
+  const CORE_DBZ = 34, MIN_AREA = 3, MAX_KMH = 120;
+  const cellCache = new Map(); // stamp -> Promise<cells[] | null>
+  let corsOK = null;
+  const trackLayer = L.layerGroup();
+
+  function dbzOf(r, g, b) {
+    const lo = Math.min(r, g, b), hi = Math.max(r, g, b);
+    if (lo > 51 || hi < 153) return 0;
+    let best = 0, bd = 1e9;
+    for (const [d, R, G, B] of LEGEND) { const e = (r - R) ** 2 + (g - G) ** 2 + (b - B) ** 2; if (e < bd) { bd = e; best = d; } }
+    return best;
+  }
+  function cellsFor(d) {
+    const key = stamp(d);
+    if (cellCache.has(key)) return cellCache.get(key);
+    const p = new Promise(res => {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.onload = () => {
+        try {
+          const cv = document.createElement("canvas"); cv.width = IMG; cv.height = IMG;
+          const cx = cv.getContext("2d", { willReadFrequently: true }); cx.drawImage(im, 0, 0);
+          const W = PANEL.x1 - PANEL.x0, H = PANEL.y1 - PANEL.y0;
+          const px = cx.getImageData(PANEL.x0, PANEL.y0, W, H).data;
+          corsOK = true;
+          const dbz = new Uint8Array(W * H);
+          for (let i = 0; i < W * H; i++) dbz[i] = dbzOf(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+          const seen = new Uint8Array(W * H), cells = [];
+          for (let i = 0; i < W * H; i++) {
+            if (seen[i] || dbz[i] < CORE_DBZ) continue;
+            const stack = [i]; seen[i] = 1; let n = 0, sx = 0, sy = 0, sw = 0, max = 0;
+            while (stack.length) {
+              const j = stack.pop(), x = j % W, y = (j / W) | 0, w = dbz[j] - CORE_DBZ + 1;
+              n++; sx += x * w; sy += y * w; sw += w; if (dbz[j] > max) max = dbz[j];
+              for (const k of [j - 1, j + 1, j - W, j + W]) {
+                if (k < 0 || k >= W * H || seen[k] || dbz[k] < CORE_DBZ) continue;
+                if (Math.abs((k % W) - x) > 1) continue;
+                seen[k] = 1; stack.push(k);
+              }
+            }
+            if (n >= MIN_AREA) {
+              const s = PRODUCTS[150].km / HALF;
+              cells.push({ e: (sx / sw + PANEL.x0 - CX) * s, n: (CY - (sy / sw + PANEL.y0)) * s, max, area: n * s * s });
+            }
+          }
+          res(cells);
+        } catch (e) { corsOK = false; res(null); }
+      };
+      im.onerror = () => { if (corsOK === null) corsOK = false; res(null); };
+      im.src = urlFor(d, 150) + "?px";
+    });
+    cellCache.set(key, p);
+    return p;
+  }
+  async function updateTracks() {
+    trackLayer.clearLayers();
+    if (!state.showTracks || state.frames.length < 2) { $("trackMsg").hidden = true; return; }
+    const frames = state.frames.slice(-8);
+    const all = await Promise.all(frames.map(cellsFor));
+    if (all.every(c => c === null)) {
+      $("trackMsg").hidden = false;
+      $("trackMsg").textContent = "Storm tracks unavailable: the Met Office site blocks pixel access from other sites.";
+      return;
+    }
+    // Link cells scan to scan (nearest neighbour within the max plausible speed).
+    let tracks = [];
+    frames.forEach((d, fi) => {
+      const cells = all[fi]; if (!cells) return;
+      const used = new Set();
+      for (const t of tracks) {
+        const last = t.pts[t.pts.length - 1];
+        const dtH = (d - last.t) / 3.6e6; if (dtH <= 0 || dtH > 0.5) continue;
+        let best = -1, bd = MAX_KMH * dtH;
+        cells.forEach((c, ci) => { if (used.has(ci)) return; const dist = Math.hypot(c.e - last.e, c.n - last.n); if (dist < bd) { bd = dist; best = ci; } });
+        if (best >= 0) { used.add(best); t.pts.push({ ...cells[best], t: d }); }
+      }
+      cells.forEach((c, ci) => { if (!used.has(ci)) tracks.push({ pts: [{ ...c, t: d }] }); });
+    });
+    const latestT = +frames[frames.length - 1];
+    tracks = tracks.filter(t => +t.pts[t.pts.length - 1].t === latestT);
+    let shown = 0;
+    for (const t of tracks) {
+      const p = t.pts, cur = p[p.length - 1];
+      const color = cur.max >= 50 ? "#ff5a4a" : cur.max >= 44 ? "#ffb547" : "#fef612";
+      let ve = 0, vn = 0;
+      if (p.length >= 3) {
+        const t0 = +p[0].t, ts = p.map(q => (q.t - t0) / 3.6e6), mt = ts.reduce((a, b) => a + b) / ts.length;
+        const me = p.reduce((a, q) => a + q.e, 0) / p.length, mn = p.reduce((a, q) => a + q.n, 0) / p.length;
+        let num_e = 0, num_n = 0, den = 0;
+        p.forEach((q, i) => { num_e += (ts[i] - mt) * (q.e - me); num_n += (ts[i] - mt) * (q.n - mn); den += (ts[i] - mt) ** 2; });
+        if (den > 0) { ve = num_e / den; vn = num_n / den; }
+      }
+      const speed = Math.hypot(ve, vn);
+      const here = kmToLatLng(cur.e, cur.n);
+      if (p.length >= 2) L.polyline(p.map(q => kmToLatLng(q.e, q.n)), { color: "#ffffff", weight: 2, opacity: .45, dashArray: "2 4", interactive: false }).addTo(trackLayer);
+      const heading = (Math.atan2(ve, vn) / D2R + 360) % 360;
+      const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+      if (p.length >= 3 && speed >= 3 && speed <= MAX_KMH) {
+        const fut = [15, 30, 45, 60].map(m => kmToLatLng(cur.e + ve * m / 60, cur.n + vn * m / 60));
+        L.polyline([here, ...fut], { color, weight: 3, opacity: .95, interactive: false }).addTo(trackLayer);
+        fut.forEach((f, i) => L.circleMarker(f, { radius: 3.5, color, weight: 2, fillColor: "#0b1114", fillOpacity: 1, interactive: false }).addTo(trackLayer)
+          .bindTooltip(`${(i + 1) * 15}′`, { permanent: zoomShowsLabels(), direction: "right", className: "cell-pin", opacity: 1 }));
+      }
+      const mph = speed * 0.621;
+      const motion = p.length >= 3 && speed >= 3 ? `Moving ${dirs[Math.round(heading / 22.5) % 16]} at ${Math.round(mph)} mph (${Math.round(speed)} km/h)` : "Motion not yet known (needs 3 scans)";
+      L.circleMarker(here, { radius: 7, color: "#fff", weight: 2, fillColor: color, fillOpacity: .95 })
+        .bindPopup(`<b>${cur.max}+ dBZ cell</b><br>${motion}<br><span class="m">core ~${cur.area.toFixed(1)} km² · tracked ${p.length} scans</span>`)
+        .addTo(trackLayer);
+      shown++;
+    }
+    $("trackMsg").hidden = shown > 0;
+    $("trackMsg").textContent = "No rain cores of 34+ dBZ right now — nothing to track.";
+    if (!map.hasLayer(trackLayer)) trackLayer.addTo(map);
+  }
+  const zoomShowsLabels = () => map.getZoom() >= 10;
+
+  // ---- Controls -------------------------------------------------------------
   function setPlaying(on) {
     state.playing = on && state.frames.length > 1;
     clearInterval(state.timer);
@@ -372,105 +582,52 @@ a { color: var(--phosphor); }
     if (state.playing) {
       let dwell = 0;
       state.timer = setInterval(() => {
-        if (state.idx === state.frames.length - 1 && dwell++ < 2) return; // hold on latest
-        dwell = 0;
-        state.idx = (state.idx + 1) % state.frames.length;
-        draw();
+        if (state.idx === state.frames.length - 1 && dwell++ < 2) return;
+        dwell = 0; state.idx = (state.idx + 1) % state.frames.length; draw();
       }, SPEEDS[state.speedIdx].ms);
     }
   }
   $("play").onclick = () => setPlaying(!state.playing);
   $("scrub").oninput = e => { setPlaying(false); state.idx = +e.target.value; draw(); };
   $("speed").textContent = SPEEDS[state.speedIdx].l;
-  $("speed").onclick = () => {
-    state.speedIdx = (state.speedIdx + 1) % SPEEDS.length; store.set("speedIdx", state.speedIdx);
-    $("speed").textContent = SPEEDS[state.speedIdx].l;
-    if (state.playing) setPlaying(true);
-  };
-  $("refresh").onclick = () => discover();
-
-  function setRange(r) {
-    state.range = r; store.set("range", r);
-    $("r150").setAttribute("aria-pressed", r === 150);
-    $("r250").setAttribute("aria-pressed", r === 250);
-    $("rangeLbl").textContent = PRODUCTS[r].label;
-    draw();
-  }
-  $("r150").onclick = () => setRange(150);
-  $("r250").onclick = () => setRange(250);
+  $("speed").onclick = () => { state.speedIdx = (state.speedIdx + 1) % SPEEDS.length; store.set("speedIdx", state.speedIdx); $("speed").textContent = SPEEDS[state.speedIdx].l; if (state.playing) setPlaying(true); };
+  $("refresh").onclick = () => { applyClouds(); discover(); };
   document.querySelectorAll("[data-len]").forEach(b => {
     b.setAttribute("aria-pressed", +b.dataset.len === state.loopLen);
     b.onclick = () => {
       state.loopLen = +b.dataset.len; store.set("loopLen", state.loopLen);
       document.querySelectorAll("[data-len]").forEach(x => x.setAttribute("aria-pressed", x === b));
-      if (state.frames.length > state.loopLen) showFrames(state.frames.slice(-state.loopLen), false);
-      else discover();
+      if (state.frames.length > state.loopLen) showFrames(state.frames.slice(-state.loopLen), false); else discover();
     };
   });
-
-  // ---- Pinch / pan / double-tap ----------------------------------------
-  const zoom = { s: 1, x: 0, y: 0 };
-  const stage = $("stage"), scope = $("scope");
-  const pts = new Map();
-  let start = null, lastTap = 0;
-  const apply = () => {
-    stage.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`;
-    $("zoomhint").hidden = zoom.s === 1;
+  $("cRadar").setAttribute("aria-pressed", state.showRadar);
+  $("cRadar").onclick = () => { state.showRadar = !state.showRadar; store.set("showRadar", state.showRadar); $("cRadar").setAttribute("aria-pressed", state.showRadar); draw(); };
+  $("cTracks").setAttribute("aria-pressed", state.showTracks);
+  $("cTracks").onclick = () => {
+    state.showTracks = !state.showTracks; store.set("showTracks", state.showTracks); $("cTracks").setAttribute("aria-pressed", state.showTracks);
+    if (state.showTracks) { trackLayer.addTo(map); updateTracks(); } else { map.removeLayer(trackLayer); $("trackMsg").hidden = true; }
   };
-  const reset = () => { zoom.s = 1; zoom.x = 0; zoom.y = 0; apply(); };
-  const mid = () => { const [a, b] = [...pts.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) }; };
-  scope.addEventListener("pointerdown", e => {
-    scope.setPointerCapture(e.pointerId);
-    const r = scope.getBoundingClientRect();
-    pts.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
-    if (pts.size === 1) {
-      const now = Date.now();
-      if (now - lastTap < 300) { reset(); lastTap = 0; } else lastTap = now;
-    }
-    start = { ...zoom, m: pts.size === 2 ? mid() : [...pts.values()][0] };
-  });
-  scope.addEventListener("pointermove", e => {
-    if (!pts.has(e.pointerId)) return;
-    const r = scope.getBoundingClientRect();
-    pts.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
-    if (pts.size === 2 && start.m.d) {
-      const m = mid();
-      const s = Math.min(8, Math.max(1, start.s * m.d / start.m.d));
-      // keep the point under the fingers fixed
-      const k = s / start.s;
-      zoom.x = m.x - (start.m.x - start.x) * k;
-      zoom.y = m.y - (start.m.y - start.y) * k;
-      zoom.s = s;
-      apply();
-    } else if (pts.size === 1 && zoom.s > 1) {
-      const p = [...pts.values()][0];
-      zoom.x = start.x + (p.x - start.m.x);
-      zoom.y = start.y + (p.y - start.m.y);
-      apply();
-    }
-  });
-  const up = e => {
-    pts.delete(e.pointerId);
-    if (zoom.s <= 1.02) reset();
-    start = { ...zoom, m: pts.size ? [...pts.values()][0] : { x: 0, y: 0 } };
-  };
-  scope.addEventListener("pointerup", up);
-  scope.addEventListener("pointercancel", up);
-  scope.addEventListener("wheel", e => {
-    e.preventDefault();
-    const r = scope.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const s = Math.min(8, Math.max(1, zoom.s * Math.exp(-e.deltaY / 300)));
-    const k = s / zoom.s;
-    zoom.x = mx - (mx - zoom.x) * k; zoom.y = my - (my - zoom.y) * k; zoom.s = s;
-    if (s === 1) reset(); else apply();
-  }, { passive: false });
+  $("cClouds").onclick = () => { state.clouds = { off: "ir", ir: "vis", vis: "off" }[state.clouds] || "off"; store.set("clouds", state.clouds); applyClouds(); };
+  $("cBase").onclick = () => { state.satBase = !state.satBase; store.set("satBase", state.satBase); applyBase(); };
+  map.on("zoomend", () => { if (state.showTracks) updateTracks(); });
 
-  // ---- Boot --------------------------------------------------------------
-  setRange(state.range);
+  let youMarker = null;
+  $("locate").onclick = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(pos => {
+      const ll = [pos.coords.latitude, pos.coords.longitude];
+      if (!youMarker) youMarker = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="you"></div>', iconSize: [16, 16] }) }).addTo(map);
+      else youMarker.setLatLng(ll);
+      map.setView(ll, Math.max(map.getZoom(), 11));
+    }, () => { $("trackMsg").hidden = false; $("trackMsg").textContent = "Location is off for this site. Allow it in Safari settings to see your position."; }, { enableHighAccuracy: true, timeout: 10000 });
+  };
+
+  // ---- Boot -----------------------------------------------------------------
+  applyBase(); applyClouds();
   discover().then(() => { if (state.frames.length > 1) setPlaying(true); });
   setInterval(() => { if (!document.hidden) discover(); }, REFRESH_MS);
   setInterval(updateAge, 30000);
+  setInterval(() => { if (!document.hidden && state.clouds !== "off") applyClouds(); }, 10 * 60000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) discover(); });
 })();
 </script>
