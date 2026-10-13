@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>SXM Radar</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SXM Radar">
+<meta name="theme-color" content="#0b1114">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a full-bleed radar scope; one status strip on top, one console of controls at the bottom. */
+:root {
+  --scope: #0b1114;       /* page ground, a blue-green black like an old PPI tube */
+  --panel: #131c20;       /* console surfaces */
+  --line: #22323a;        /* hairlines and track */
+  --ink: #dbe6e4;         /* primary text */
+  --dim: #7f9692;         /* secondary text */
+  --phosphor: #5ef2b0;    /* accent: sweep green */
+  --amber: #ffb547;       /* stale / warning */
+  --red: #ff6b5e;         /* error */
+  --ui: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--scope); color: var(--ink);
+  font: 500 15px/1.3 var(--ui);
+  overflow: hidden; -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.app { height: 100%; display: grid; grid-template-rows: auto 1fr auto; }
+
+/* Top strip */
+.top {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
+  background: linear-gradient(var(--scope), rgba(11,17,20,.85));
+  border-bottom: 1px solid var(--line);
+  z-index: 2;
+}
+.site { display: flex; flex-direction: column; min-width: 0; }
+.site b { font-size: 19px; font-weight: 700; letter-spacing: .02em; }
+.site span { font-size: 12px; color: var(--dim); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clock { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.clock .t { font-size: 18px; color: var(--ink); }
+.clock .age { font-size: 12px; color: var(--dim); }
+.clock .age.stale { color: var(--amber); }
+
+/* Scope */
+.scope { position: relative; overflow: hidden; touch-action: none; min-height: 0; }
+.stage { position: absolute; inset: 0; display: grid; place-items: center; transform-origin: 0 0; will-change: transform; }
+.stage img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; -webkit-user-drag: none; pointer-events: none; }
+.status {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(320px, calc(100% - 32px)); text-align: center;
+  font-family: var(--mono); font-size: 13px; color: var(--dim);
+  display: grid; gap: 14px; justify-items: center;
+}
+.status.err { color: var(--red); }
+.sweep {
+  width: 72px; height: 72px; border-radius: 50%; position: relative;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle, transparent 32%, var(--line) 33%, transparent 34%),
+    radial-gradient(circle, transparent 65%, var(--line) 66%, transparent 67%);
+}
+.sweep::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(94,242,176,.55), transparent 25%);
+  animation: spin 2s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sweep::after { animation: none; } }
+.zoomhint {
+  position: absolute; right: 12px; bottom: 10px; font-family: var(--mono); font-size: 11px;
+  color: var(--dim); background: rgba(11,17,20,.7); padding: 3px 7px; border-radius: 4px;
+}
+
+/* Console */
+.console {
+  background: var(--panel); border-top: 1px solid var(--line);
+  padding: 12px 16px calc(env(safe-area-inset-bottom, 0px) + 12px);
+  display: grid; gap: 12px; z-index: 2;
+}
+.row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+button {
+  font: inherit; color: var(--ink); background: transparent;
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; cursor: pointer;
+}
+button:focus-visible, input:focus-visible { outline: 2px solid var(--phosphor); outline-offset: 2px; }
+button:active { background: var(--line); }
+.play {
+  width: 48px; height: 48px; border-radius: 50%; padding: 0; flex: none;
+  display: grid; place-items: center; border-color: var(--phosphor); color: var(--phosphor);
+}
+.play svg { width: 20px; height: 20px; fill: currentColor; }
+.scrub { flex: 1; min-width: 0; display: grid; gap: 4px; }
+input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; height: 28px; }
+.ticks { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.seg button { border: 0; border-radius: 0; padding: 8px 12px; color: var(--dim); font-weight: 600; letter-spacing: .04em; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed=true] { color: var(--scope); background: var(--phosphor); }
+.spacer { flex: 1; }
+.icon { padding: 8px 10px; display: inline-grid; place-items: center; }
+.icon svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.label { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+a { color: var(--phosphor); }
+.foot { font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.foot a { text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="site">
+      <b>St. Peters Doppler</b>
+      <span>Sint Maarten · Reflectivity · <span id="rangeLbl">150 km</span></span>
+    </div>
+    <div class="clock">
+      <div class="t" id="frameTime">--:--</div>
+      <div class="age" id="frameAge">locating scans</div>
+    </div>
+  </header>
+
+  <main class="scope" id="scope">
+    <div class="stage" id="stage"><img id="img" alt="Radar reflectivity image from the St. Peters weather radar"></div>
+    <div class="status" id="status"><div class="sweep"></div><div id="statusText">Looking for the newest scan…</div></div>
+    <div class="zoomhint" id="zoomhint" hidden>Pinch to zoom · double-tap to reset</div>
+  </main>
+
+  <footer class="console">
+    <div class="row">
+      <button class="play" id="play" aria-label="Play loop">
+        <svg viewBox="0 0 24 24" id="playIcon"><path d="M7 4l13 8-13 8z"/></svg>
+      </button>
+      <div class="scrub">
+        <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Frame">
+        <div class="ticks"><span id="tFirst">—</span><span id="tCount">0 frames</span><span id="tLast">—</span></div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="seg" role="group" aria-label="Range">
+        <button id="r150" aria-pressed="true">150 KM</button>
+        <button id="r250" aria-pressed="false">250 KM</button>
+      </div>
+      <div class="seg" role="group" aria-label="Loop length">
+        <button data-len="6" aria-pressed="false">6</button>
+        <button data-len="12" aria-pressed="true">12</button>
+        <button data-len="24" aria-pressed="false">24</button>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon" id="speed" aria-label="Loop speed">1×</button>
+      <button class="icon" id="refresh" aria-label="Refresh now">
+        <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+      </button>
+    </div>
+    <div class="foot">
+      <span id="note">Times in Atlantic Standard Time (Grand Case)</span>
+      <a href="https://www.meteosxm.com/" target="_blank" rel="noopener">Source: Meteorological Dept. St. Maarten ↗</a>
+    </div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  // ---- Data source -------------------------------------------------------
+  // The Met Dept publishes JPEGs named with the scan time in UTC:
+  //   .../displayone/CAP_Z_010_150_YYYYMMDDHHMMSS.jpg  (150 km)
+  //   .../displaytwo/CAP_Z_010_240_YYYYMMDDHHMMSS.jpg  (250 km)
+  // There is no index of frames, so the app finds them by asking for
+  // candidate timestamps and keeping the ones that load.
+  const BASE = "https://www.meteosxm.com/radar/meteosxm.com/radar/";
+  const PRODUCTS = {
+    150: { dir: "displayone", code: "150", label: "150 km" },
+    250: { dir: "displaytwo", code: "240", label: "250 km" },
+  };
+  const TZ = "America/Lower_Princes";   // AST, UTC-4, no DST
+  const REFRESH_MS = 2 * 60 * 1000;
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem("sxm." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("sxm." + k, JSON.stringify(v)); } catch {} },
+  };
+
+  const state = {
+    range: store.get("range", 150),
+    loopLen: store.get("loopLen", 12),
+    speedIdx: store.get("speedIdx", 1),
+    sec: store.get("sec", 51),            // learned seconds offset of scan names
+    interval: store.get("interval", 5),   // learned minutes between scans
+    frames: [],                            // Date objects, oldest first
+    idx: 0, playing: false, timer: null, busy: false,
+  };
+  const SPEEDS = [{ l: "½×", ms: 900 }, { l: "1×", ms: 500 }, { l: "2×", ms: 250 }];
+
+  const $ = id => document.getElementById(id);
+  const pad = n => String(n).padStart(2, "0");
+  const stamp = d => d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) +
+                     pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds());
+  const urlFor = (d, range = state.range) => {
+    const p = PRODUCTS[range];
+    return `${BASE}${p.dir}/CAP_Z_010_${p.code}_${stamp(d)}.jpg`;
+  };
+  const fmt = d => d.toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
+
+  // ---- Probing -----------------------------------------------------------
+  const cache = new Map();        // url -> Promise<boolean>
+  function probe(url) {
+    if (cache.has(url)) return cache.get(url);
+    const p = new Promise(res => {
+      const im = new Image();
+      const t = setTimeout(() => { im.src = ""; res(false); }, 9000);
+      im.onload = () => { clearTimeout(t); res(im.naturalWidth > 50); };
+      im.onerror = () => { clearTimeout(t); res(false); };
+      im.src = url;
+    });
+    cache.set(url, p);
+    p.then(ok => { if (!ok) setTimeout(() => cache.delete(url), 60000); });
+    return p;
+  }
+  // Probe many URLs with limited parallelism; resolve with the first Date that loads (in list order).
+  async function firstHit(dates, limit = 12) {
+    const results = new Array(dates.length);
+    let next = 0, best = -1;
+    async function worker() {
+      while (next < dates.length) {
+        const i = next++;
+        if (best !== -1 && i > best) return;
+        results[i] = await probe(urlFor(dates[i], 150));
+        if (results[i] && (best === -1 || i < best)) best = i;
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, dates.length) }, worker));
+    return best === -1 ? null : dates[best];
+  }
+  const at = (base, minOff, sec) => {
+    const d = new Date(base); d.setUTCSeconds(0, 0);
+    d.setUTCMinutes(d.getUTCMinutes() + minOff); d.setUTCSeconds(sec); return d;
+  };
+  const secondsAround = (s, spread) => {
+    const out = [s];
+    for (let k = 1; k <= spread; k++) out.push((s + k) % 60, (s - k + 60) % 60);
+    return out;
+  };
+  const ALL_SECS = Array.from({ length: 60 }, (_, i) => i);
+
+  // Find the newest scan at or before `from`, searching back `span` minutes.
+  async function findBefore(from, span, wide = false) {
+    for (let m = 0; m >= -span; m--) {
+      const secs = wide ? ALL_SECS : secondsAround(state.sec, 3);
+      const cands = secs.map(s => at(from, m, s)).filter(d => d <= from);
+      if (!cands.length) continue;
+      cands.sort((a, b) => b - a);
+      const hit = await firstHit(cands, wide ? 20 : 8);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  async function discover() {
+    if (state.busy) return;
+    state.busy = true;
+    $("refresh").disabled = true;
+    try {
+      const now = new Date();
+      setStatus(state.frames.length ? null : "Looking for the newest scan…");
+      let latest = await findBefore(now, 40);
+      if (!latest) {
+        setStatus("Still looking — trying every second of the last half hour…");
+        latest = await findBefore(now, 30, true);
+      }
+      if (!latest) {
+        if (!state.frames.length) setStatus("No recent scans found. The radar may be offline, or the Met Office changed its file names. Tap the source link below to check.", true);
+        return;
+      }
+      state.sec = latest.getUTCSeconds(); store.set("sec", state.sec);
+
+      // Skip the walk if nothing new arrived.
+      const known = state.frames.length && state.frames[state.frames.length - 1].getTime() === latest.getTime();
+      if (known && state.frames.length >= state.loopLen) return;
+
+      const frames = [latest];
+      // Learn the interval from the previous scan.
+      let prev = await findBefore(new Date(latest.getTime() - 60000), 20);
+      if (!prev) prev = await findBefore(new Date(latest.getTime() - 60000), 15, true);
+      if (prev) {
+        const iv = Math.max(1, Math.round((latest - prev) / 60000));
+        state.interval = iv; store.set("interval", iv);
+        frames.unshift(prev);
+        setStatus(null); showFrames(frames.slice(), true);
+        // Walk back at the learned cadence.
+        let cursor = prev, misses = 0;
+        while (frames.length < state.loopLen && misses < 3) {
+          const target = new Date(cursor.getTime() - state.interval * 60000);
+          const cands = [];
+          for (const m of [0, -1, 1]) for (const s of secondsAround(state.sec, 4)) cands.push(at(target, m, s));
+          let hit = await firstHit(cands);
+          if (!hit) hit = await findBefore(new Date(target.getTime() + 60000), 2, true);
+          if (hit && hit < cursor) { frames.unshift(hit); cursor = hit; misses = 0; showFrames(frames.slice(), false); }
+          else { cursor = target; misses++; }
+        }
+      }
+      showFrames(frames, !state.playing);
+    } finally {
+      state.busy = false;
+      $("refresh").disabled = false;
+    }
+  }
+
+  // ---- Display -----------------------------------------------------------
+  function setStatus(text, err = false) {
+    const el = $("status");
+    if (!text) { el.hidden = true; return; }
+    el.hidden = false; el.classList.toggle("err", err);
+    el.querySelector(".sweep").hidden = err;
+    $("statusText").textContent = text;
+  }
+  function showFrames(frames, jumpToLatest) {
+    const wasAtEnd = state.idx >= state.frames.length - 1;
+    state.frames = frames;
+    const sc = $("scrub");
+    sc.max = Math.max(0, frames.length - 1);
+    if (jumpToLatest || wasAtEnd) state.idx = frames.length - 1;
+    state.idx = Math.min(state.idx, frames.length - 1);
+    $("tFirst").textContent = frames.length ? fmt(frames[0]) : "—";
+    $("tLast").textContent = frames.length ? fmt(frames[frames.length - 1]) : "—";
+    $("tCount").textContent = `${frames.length} frame${frames.length === 1 ? "" : "s"}` + (frames.length > 1 ? ` · ${state.interval} min` : "");
+    // Preload the other range too so switching is instant.
+    frames.forEach(d => { new Image().src = urlFor(d); });
+    draw();
+  }
+  function draw() {
+    const d = state.frames[state.idx];
+    if (!d) return;
+    $("scrub").value = state.idx;
+    const img = $("img");
+    const u = urlFor(d);
+    img.onerror = () => { if (state.range === 250) $("frameAge").textContent = "250 km image missing for this scan"; };
+    if (img.src !== u) img.src = u;
+    $("frameTime").textContent = fmt(d);
+    updateAge();
+    $("zoomhint").hidden = zoom.s !== 1;
+  }
+  function updateAge() {
+    const d = state.frames[state.idx]; if (!d) return;
+    const latest = state.frames[state.frames.length - 1];
+    const mins = Math.round((Date.now() - d) / 60000);
+    const el = $("frameAge");
+    const isLatest = d === latest;
+    el.textContent = mins <= 0 ? "just now" : `${mins} min ago` + (isLatest ? " · latest" : "");
+    el.classList.toggle("stale", isLatest && mins > 20);
+  }
+
+  // ---- Loop controls -----------------------------------------------------
+  function setPlaying(on) {
+    state.playing = on && state.frames.length > 1;
+    clearInterval(state.timer);
+    $("playIcon").innerHTML = state.playing ? '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>' : '<path d="M7 4l13 8-13 8z"/>';
+    $("play").setAttribute("aria-label", state.playing ? "Pause loop" : "Play loop");
+    if (state.playing) {
+      let dwell = 0;
+      state.timer = setInterval(() => {
+        if (state.idx === state.frames.length - 1 && dwell++ < 2) return; // hold on latest
+        dwell = 0;
+        state.idx = (state.idx + 1) % state.frames.length;
+        draw();
+      }, SPEEDS[state.speedIdx].ms);
+    }
+  }
+  $("play").onclick = () => setPlaying(!state.playing);
+  $("scrub").oninput = e => { setPlaying(false); state.idx = +e.target.value; draw(); };
+  $("speed").textContent = SPEEDS[state.speedIdx].l;
+  $("speed").onclick = () => {
+    state.speedIdx = (state.speedIdx + 1) % SPEEDS.length; store.set("speedIdx", state.speedIdx);
+    $("speed").textContent = SPEEDS[state.speedIdx].l;
+    if (state.playing) setPlaying(true);
+  };
+  $("refresh").onclick = () => discover();
+
+  function setRange(r) {
+    state.range = r; store.set("range", r);
+    $("r150").setAttribute("aria-pressed", r === 150);
+    $("r250").setAttribute("aria-pressed", r === 250);
+    $("rangeLbl").textContent = PRODUCTS[r].label;
+    draw();
+  }
+  $("r150").onclick = () => setRange(150);
+  $("r250").onclick = () => setRange(250);
+  document.querySelectorAll("[data-len]").forEach(b => {
+    b.setAttribute("aria-pressed", +b.dataset.len === state.loopLen);
+    b.onclick = () => {
+      state.loopLen = +b.dataset.len; store.set("loopLen", state.loopLen);
+      document.querySelectorAll("[data-len]").forEach(x => x.setAttribute("aria-pressed", x === b));
+      if (state.frames.length > state.loopLen) showFrames(state.frames.slice(-state.loopLen), false);
+      else discover();
+    };
+  });
+
+  // ---- Pinch / pan / double-tap ----------------------------------------
+  const zoom = { s: 1, x: 0, y: 0 };
+  const stage = $("stage"), scope = $("scope");
+  const pts = new Map();
+  let start = null, lastTap = 0;
+  const apply = () => {
+    stage.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`;
+    $("zoomhint").hidden = zoom.s === 1;
+  };
+  const reset = () => { zoom.s = 1; zoom.x = 0; zoom.y = 0; apply(); };
+  const mid = () => { const [a, b] = [...pts.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) }; };
+  scope.addEventListener("pointerdown", e => {
+    scope.setPointerCapture(e.pointerId);
+    const r = scope.getBoundingClientRect();
+    pts.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
+    if (pts.size === 1) {
+      const now = Date.now();
+      if (now - lastTap < 300) { reset(); lastTap = 0; } else lastTap = now;
+    }
+    start = { ...zoom, m: pts.size === 2 ? mid() : [...pts.values()][0] };
+  });
+  scope.addEventListener("pointermove", e => {
+    if (!pts.has(e.pointerId)) return;
+    const r = scope.getBoundingClientRect();
+    pts.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
+    if (pts.size === 2 && start.m.d) {
+      const m = mid();
+      const s = Math.min(8, Math.max(1, start.s * m.d / start.m.d));
+      // keep the point under the fingers fixed
+      const k = s / start.s;
+      zoom.x = m.x - (start.m.x - start.x) * k;
+      zoom.y = m.y - (start.m.y - start.y) * k;
+      zoom.s = s;
+      apply();
+    } else if (pts.size === 1 && zoom.s > 1) {
+      const p = [...pts.values()][0];
+      zoom.x = start.x + (p.x - start.m.x);
+      zoom.y = start.y + (p.y - start.m.y);
+      apply();
+    }
+  });
+  const up = e => {
+    pts.delete(e.pointerId);
+    if (zoom.s <= 1.02) reset();
+    start = { ...zoom, m: pts.size ? [...pts.values()][0] : { x: 0, y: 0 } };
+  };
+  scope.addEventListener("pointerup", up);
+  scope.addEventListener("pointercancel", up);
+  scope.addEventListener("wheel", e => {
+    e.preventDefault();
+    const r = scope.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const s = Math.min(8, Math.max(1, zoom.s * Math.exp(-e.deltaY / 300)));
+    const k = s / zoom.s;
+    zoom.x = mx - (mx - zoom.x) * k; zoom.y = my - (my - zoom.y) * k; zoom.s = s;
+    if (s === 1) reset(); else apply();
+  }, { passive: false });
+
+  // ---- Boot --------------------------------------------------------------
+  setRange(state.range);
+  discover().then(() => { if (state.frames.length > 1) setPlaying(true); });
+  setInterval(() => { if (!document.hidden) discover(); }, REFRESH_MS);
+  setInterval(updateAge, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) discover(); });
+})();
+</script>
+</body>
+</html>
