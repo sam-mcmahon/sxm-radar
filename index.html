@@ -282,14 +282,16 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     .setView(store.get("view", [18.07, -63.06]), store.get("zoom", 10));
   map.on("moveend", () => { store.set("view", [map.getCenter().lat, map.getCenter().lng]); store.set("zoom", map.getZoom()); });
 
-  const darkBase = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-    subdomains: "abcd", maxZoom: 19,
-    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>',
+  const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/";
+  const darkBase = L.layerGroup([
+    L.tileLayer(ESRI + "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 16, maxZoom: 19,
+      attribution: "Map © Esri, HERE, Garmin, © OpenStreetMap contributors" }),
+    L.tileLayer(ESRI + "Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 16, maxZoom: 19, pane: "shadowPane" }),
+  ]);
+  const satBase = L.tileLayer(ESRI + "World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxNativeZoom: 18, maxZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
   });
-  const satBase = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-    maxZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
-  });
-  const satLabels = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 19, pane: "shadowPane" });
+  const satLabels = L.tileLayer(ESRI + "Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 16, maxZoom: 19, pane: "shadowPane" });
   function applyBase() {
     [darkBase, satBase, satLabels].forEach(l => map.removeLayer(l));
     if (state.satBase) { satBase.addTo(map); satLabels.addTo(map); } else darkBase.addTo(map);
@@ -375,6 +377,22 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     }
     return null;
   }
+  // Scans run on a fixed cadence (e.g. every 5 min at :51 s), so a long look-back only needs to
+  // check the slots on that cadence. Used when nothing turns up in the last 40 minutes.
+  async function findOnCadence(from, hours) {
+    const iv = state.interval, phase = store.get("phase", 0);
+    const t = new Date(from); t.setUTCSeconds(0, 0);
+    let checked = 0;
+    for (let m = 0; m <= hours * 60; m++) {
+      const d = new Date(+t - m * 60000);
+      if (((d.getUTCMinutes() - phase) % iv + iv) % iv !== 0) continue;
+      if (++checked % 6 === 0 && !state.frames.length) setStatus(`No scans in the last hour. Checking back to ${fmt(d)}…`);
+      const cands = secondsAround(state.sec, 3).map(s => { const x = new Date(d); x.setUTCSeconds(s); return x; }).filter(x => x <= from);
+      const hit = await firstHit(cands, 7);
+      if (hit) return hit;
+    }
+    return null;
+  }
   async function discover() {
     if (state.busy) return;
     state.busy = true; $("refresh").disabled = true;
@@ -382,9 +400,11 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
       const now = new Date();
       if (!state.frames.length) setStatus("Looking for the newest scan…");
       let latest = await findBefore(now, 40);
-      if (!latest) { if (!state.frames.length) setStatus("Still looking — checking every second of the last half hour…"); latest = await findBefore(now, 30, true); }
-      if (!latest) { if (!state.frames.length) setStatus("No recent scans found. The radar may be offline. Tap the source link below to check.", true); return; }
+      if (!latest) latest = await findOnCadence(new Date(+now - 40 * 60000), 8);
+      if (!latest) { if (!state.frames.length) setStatus("Trying every second of the last half hour…"); latest = await findBefore(now, 30, true); }
+      if (!latest) { if (!state.frames.length) setStatus("The radar hasn't posted a scan in the last 8 hours. It may be offline. Tap the source link below to check.", true); return; }
       state.sec = latest.getUTCSeconds(); store.set("sec", state.sec);
+      store.set("phase", latest.getUTCMinutes() % state.interval);
       const known = state.frames.length && +state.frames[state.frames.length - 1] === +latest;
       if (known && state.frames.length >= state.loopLen) return;
       const frames = [latest];
@@ -392,6 +412,7 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
       if (!prev) prev = await findBefore(new Date(+latest - 60000), 15, true);
       if (prev) {
         const iv = Math.max(1, Math.round((latest - prev) / 60000)); state.interval = iv; store.set("interval", iv);
+        store.set("phase", latest.getUTCMinutes() % iv);
         frames.unshift(prev); showFrames(frames.slice(), true);
         let cursor = prev, misses = 0;
         while (frames.length < state.loopLen && misses < 3) {
@@ -418,6 +439,7 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     const wasAtEnd = state.idx >= state.frames.length - 1;
     state.frames = frames;
     if (frames.length) setStatus(null);
+    store.set("frames", frames.map(d => +d));
     $("scrub").max = Math.max(0, frames.length - 1);
     if (jumpToLatest || wasAtEnd) state.idx = frames.length - 1;
     state.idx = Math.min(state.idx, frames.length - 1);
@@ -448,7 +470,8 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
     const latest = state.frames[state.frames.length - 1];
     const mins = Math.round((Date.now() - d) / 60000);
     const el = $("frameAge");
-    el.textContent = (mins <= 0 ? "just now" : `${mins} min ago`) + (d === latest ? " · latest" : "");
+    const ago = mins <= 0 ? "just now" : mins < 90 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
+    el.textContent = ago + (d === latest ? (mins > 20 ? " · radar quiet" : " · latest") : "");
     el.classList.toggle("stale", d === latest && mins > 20);
   }
 
@@ -624,6 +647,8 @@ input[type=range] { width: 100%; accent-color: var(--phosphor); margin: 0; heigh
 
   // ---- Boot -----------------------------------------------------------------
   applyBase(); applyClouds();
+  const saved = store.get("frames", []).map(n => new Date(n)).filter(d => Date.now() - d < 12 * 3.6e6);
+  if (saved.length) showFrames(saved, true);
   discover().then(() => { if (state.frames.length > 1) setPlaying(true); });
   setInterval(() => { if (!document.hidden) discover(); }, REFRESH_MS);
   setInterval(updateAge, 30000);
