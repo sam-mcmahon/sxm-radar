@@ -50,7 +50,8 @@ async function scenario(browser, name, { scans = [], cors = true, expect, timeou
   const page = await ctx.newPage();
   const errors = [], tileHosts = new Set();
   page.on("pageerror", e => errors.push("pageerror: " + e.message));
-  page.on("console", m => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push("console: " + m.text()); });
+  // Failed scan-name guesses (404) are by design; blocked pixel reads are expected when cors is off.
+  page.on("console", m => { if (m.type() === "error" && !/Failed to load resource|status of 404|access control checks/.test(m.text())) errors.push("console: " + m.text()); });
 
   const files = new Map(); // filename -> fixture path
   scans.forEach((d, i) => {
@@ -211,7 +212,8 @@ for (const engine of engines) {
     if (!ok) failed++;
     const gha = process.env.GITHUB_ACTIONS;
     console.log(`${ok ? "PASS" : "FAIL"}  ${engine}  ${name}  (${r.secs}s)`);
-    r.failures.forEach(f => console.log(gha ? `::error title=${engine} ${name}::${f}` : "      - " + f));
+    r.failures.slice(0, 3).forEach(f => console.log(gha ? `::error title=${engine} ${name}::${f.slice(0, 400)}` : "      - " + f));
+    if (!gha) r.failures.slice(3).forEach(f => console.log("      - " + f));
   }
   await browser.close();
 }
